@@ -92,7 +92,89 @@ function PullTable({ items }) {
   );
 }
 
-// ─── FIELD APP ───────────────────────────────────────────────────────────────
+// ─── QR SCANNER ──────────────────────────────────────────────────────────────
+function QRScanner({ onScan, onClose }) {
+  const videoRef = useRef();
+  const canvasRef = useRef();
+  const animRef = useRef();
+  const [status, setStatus] = useState("Starting camera...");
+  const [error, setError] = useState(null);
+  const [jsQRLoaded, setJsQRLoaded] = useState(false);
+
+  useEffect(() => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js";
+    script.onload = () => setJsQRLoaded(true);
+    script.onerror = () => setError("Failed to load QR scanner library.");
+    document.head.appendChild(script);
+    return () => document.head.removeChild(script);
+  }, []);
+
+  useEffect(() => {
+    if (!jsQRLoaded) return;
+    let stream;
+    const start = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        setStatus("Point at a bin QR code");
+        scan();
+      } catch { setError("Camera access denied. Please allow camera permissions."); }
+    };
+    const scan = () => {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      if (!video || !canvas) return;
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0);
+        try {
+          const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = window.jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
+          if (code) {
+            stream?.getTracks().forEach(t => t.stop());
+            cancelAnimationFrame(animRef.current);
+            onScan(code.data.trim());
+            return;
+          }
+        } catch {}
+      }
+      animRef.current = requestAnimationFrame(scan);
+    };
+    start();
+    return () => { stream?.getTracks().forEach(t => t.stop()); cancelAnimationFrame(animRef.current); };
+  }, [jsQRLoaded]);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 100, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+        <span style={{ fontWeight: 700, fontSize: 16, color: C.text }}>Scan Bin QR Code</span>
+        <button onClick={onClose} style={{ background: C.dangerDim, border: `1px solid ${C.danger}`, borderRadius: 8, color: C.danger, padding: "6px 14px", fontWeight: 700, cursor: "pointer", fontSize: 14 }}>Cancel</button>
+      </div>
+      <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+        {error ? (
+          <div style={{ padding: 32, textAlign: "center", color: C.muted, fontSize: 15 }}>{error}</div>
+        ) : (
+          <>
+            <video ref={videoRef} style={{ width: "100%", height: "100%", objectFit: "cover" }} playsInline muted />
+            <canvas ref={canvasRef} style={{ display: "none" }} />
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+              <div style={{ width: 220, height: 220, position: "relative" }}>
+                {[["top","left"],["bottom","left"],["top","right"],["bottom","right"]].map(([v,h], i) => (
+                  <div key={i} style={{ position: "absolute", [v]: 0, [h]: 0, width: 36, height: 36, borderTop: v==="top" ? `3px solid ${C.lime}` : "none", borderBottom: v==="bottom" ? `3px solid ${C.lime}` : "none", borderLeft: h==="left" ? `3px solid ${C.lime}` : "none", borderRight: h==="right" ? `3px solid ${C.lime}` : "none" }} />
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+      <div style={{ padding: "16px 20px", background: C.surface, borderTop: `1px solid ${C.border}`, textAlign: "center", fontSize: 13, color: C.muted }}>{status}</div>
+    </div>
+  );
+}
 function FieldApp() {
   const [step, setStep] = useState("job");
   const [jobNum, setJobNum] = useState("");
@@ -117,7 +199,16 @@ function FieldApp() {
     setTimeout(() => binRef.current?.focus(), 50);
   };
 
-  const lookupPart = async (val) => {
+  const handleScan = async (data) => {
+    setScanning(false);
+    setBinInput(data.toUpperCase());
+    setScanFlash(true);
+    setTimeout(() => setScanFlash(false), 600);
+    await lookupPart(data);
+    setTimeout(() => qtyRef.current?.focus(), 150);
+  };
+
+ = async (val) => {
     if (!val || val.length < 2) { setDesc(""); setPartNotFound(false); return; }
     try {
       const rows = await db(`parts?bin_id=ilike.${encodeURIComponent(val.trim())}&select=description&limit=1`);
@@ -181,6 +272,7 @@ function FieldApp() {
 
   return (
     <div style={s.page}>
+      {scanning && <QRScanner onScan={handleScan} onClose={() => setScanning(false)} />}
       <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <Logo />
         {items.length > 0 && <div style={s.pill(C.limeDim, C.limeText)}>{items.length} item{items.length !== 1 ? "s" : ""}</div>}
@@ -191,9 +283,19 @@ function FieldApp() {
       </div>
       <div style={{ padding: "16px 16px 110px" }}>
         {error && <div style={{ background: C.dangerDim, border: `1px solid ${C.danger}`, borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 13, color: C.danger }}>{error}</div>}
-        <div style={s.card}>
+        <div style={{ ...s.card, border: scanFlash ? `1px solid ${C.lime}` : `1px solid ${C.border}`, transition: "border-color 0.3s" }}>
           <label style={s.label}>Part #</label>
-          <input ref={binRef} style={{ ...s.inp, fontFamily: C.mono, fontSize: 18, fontWeight: 800, letterSpacing: "0.08em", marginBottom: 6, color: C.limeText }} placeholder="Type part number" value={binInput} onChange={e => { setBinInput(e.target.value.toUpperCase()); lookupPart(e.target.value); }} onKeyDown={e => e.key === "Enter" && addItem()} />
+          <div style={{ display: "flex", gap: 10, marginBottom: 6 }}>
+            <input ref={binRef} style={{ ...s.inp, fontFamily: C.mono, fontSize: 18, fontWeight: 800, letterSpacing: "0.08em", color: C.limeText }} placeholder="Scan or type" value={binInput} onChange={e => { setBinInput(e.target.value.toUpperCase()); lookupPart(e.target.value); }} onKeyDown={e => e.key === "Enter" && addItem()} />
+            <button onClick={() => setScanning(true)} style={{ padding: "0 16px", height: 50, borderRadius: 10, border: `1px solid ${C.lime}`, background: C.limeDim, color: C.lime, fontWeight: 800, fontSize: 22, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+                <line x1="14" y1="14" x2="14" y2="14"/><line x1="17" y1="14" x2="17" y2="14"/><line x1="20" y1="14" x2="20" y2="14"/>
+                <line x1="14" y1="17" x2="14" y2="17"/><line x1="17" y1="17" x2="20" y2="17"/><line x1="20" y1="20" x2="20" y2="20"/>
+                <line x1="14" y1="20" x2="17" y2="20"/>
+              </svg>
+            </button>
+          </div>
           {partNotFound && <div style={{ fontSize: 12, color: C.amber, marginBottom: 10 }}>⚠ Part not found — enter description manually</div>}
           {!partNotFound && <div style={{ marginBottom: 14 }} />}
           <label style={s.label}>Description <span style={{ color: C.border, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>auto-fills from parts catalog</span></label>
