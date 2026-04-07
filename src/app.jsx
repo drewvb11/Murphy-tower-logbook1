@@ -102,12 +102,12 @@ function QRScanner({ onScan, onClose }) {
   const [jsQRLoaded, setJsQRLoaded] = useState(false);
 
   useEffect(() => {
+    if (window.jsQR) { setJsQRLoaded(true); return; }
     const script = document.createElement("script");
     script.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js";
     script.onload = () => setJsQRLoaded(true);
     script.onerror = () => setError("Failed to load QR scanner library.");
     document.head.appendChild(script);
-    return () => document.head.removeChild(script);
   }, []);
 
   useEffect(() => {
@@ -120,7 +120,9 @@ function QRScanner({ onScan, onClose }) {
         await videoRef.current.play();
         setStatus("Point at a bin QR code");
         scan();
-      } catch { setError("Camera access denied. Please allow camera permissions."); }
+      } catch {
+        setError("Camera access denied. Please allow camera permissions.");
+      }
     };
     const scan = () => {
       const video = videoRef.current;
@@ -145,7 +147,10 @@ function QRScanner({ onScan, onClose }) {
       animRef.current = requestAnimationFrame(scan);
     };
     start();
-    return () => { stream?.getTracks().forEach(t => t.stop()); cancelAnimationFrame(animRef.current); };
+    return () => {
+      stream?.getTracks().forEach(t => t.stop());
+      cancelAnimationFrame(animRef.current);
+    };
   }, [jsQRLoaded]);
 
   return (
@@ -175,6 +180,8 @@ function QRScanner({ onScan, onClose }) {
     </div>
   );
 }
+
+// ─── FIELD APP ───────────────────────────────────────────────────────────────
 function FieldApp() {
   const [step, setStep] = useState("job");
   const [jobNum, setJobNum] = useState("");
@@ -187,16 +194,21 @@ function FieldApp() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [partNotFound, setPartNotFound] = useState(false);
-  const binRef = useRef(); const qtyRef = useRef();
+  const [scanning, setScanning] = useState(false);
+  const [scanFlash, setScanFlash] = useState(false);
+  const binRef = useRef();
+  const qtyRef = useRef();
 
   const canStart = jobNum.trim() && empName.trim();
   const startJob = () => { if (!canStart) return; setItems([]); setStep("scan"); setTimeout(() => binRef.current?.focus(), 100); };
 
-  const addItem = () => {
-    if (!binInput.trim() || !qty || Number(qty) <= 0) return;
-    setItems(prev => [...prev, { id: Date.now(), bin: binInput.trim().toUpperCase(), qty: Number(qty), desc: desc.trim() || "—" }]);
-    setBinInput(""); setQty(""); setDesc(""); setPartNotFound(false);
-    setTimeout(() => binRef.current?.focus(), 50);
+  const lookupPart = async (val) => {
+    if (!val || val.length < 2) { setDesc(""); setPartNotFound(false); return; }
+    try {
+      const rows = await db(`parts?bin_id=ilike.${encodeURIComponent(val.trim())}&select=description&limit=1`);
+      if (rows && rows.length > 0) { setDesc(rows[0].description); setPartNotFound(false); }
+      else { setDesc(""); setPartNotFound(true); }
+    } catch { setDesc(""); }
   };
 
   const handleScan = async (data) => {
@@ -208,13 +220,11 @@ function FieldApp() {
     setTimeout(() => qtyRef.current?.focus(), 150);
   };
 
- = async (val) => {
-    if (!val || val.length < 2) { setDesc(""); setPartNotFound(false); return; }
-    try {
-      const rows = await db(`parts?bin_id=ilike.${encodeURIComponent(val.trim())}&select=description&limit=1`);
-      if (rows && rows.length > 0) { setDesc(rows[0].description); setPartNotFound(false); }
-      else { setDesc(""); setPartNotFound(true); }
-    } catch { setDesc(""); }
+  const addItem = () => {
+    if (!binInput.trim() || !qty || Number(qty) <= 0) return;
+    setItems(prev => [...prev, { id: Date.now(), bin: binInput.trim().toUpperCase(), qty: Number(qty), desc: desc.trim() || "—" }]);
+    setBinInput(""); setQty(""); setDesc(""); setPartNotFound(false);
+    setTimeout(() => binRef.current?.focus(), 50);
   };
 
   const submitPull = async () => {
@@ -298,8 +308,8 @@ function FieldApp() {
           </div>
           {partNotFound && <div style={{ fontSize: 12, color: C.amber, marginBottom: 10 }}>⚠ Part not found — enter description manually</div>}
           {!partNotFound && <div style={{ marginBottom: 14 }} />}
-          <label style={s.label}>Description <span style={{ color: C.border, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>auto-fills from parts catalog</span></label>
-          <input style={{ ...s.inp, marginBottom: 14, color: desc ? C.text : C.muted }} placeholder='Auto-filling...' value={desc} onChange={e => setDesc(e.target.value)} onKeyDown={e => e.key === "Enter" && addItem()} />
+          <label style={s.label}>Description <span style={{ color: C.border, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>auto-fills from catalog</span></label>
+          <input style={{ ...s.inp, marginBottom: 14, color: desc ? C.text : C.muted }} placeholder="Auto-filling..." value={desc} onChange={e => setDesc(e.target.value)} onKeyDown={e => e.key === "Enter" && addItem()} />
           <label style={s.label}>Quantity</label>
           <div style={{ display: "flex", gap: 10 }}>
             <input ref={qtyRef} style={{ ...s.inp, fontSize: 26, fontWeight: 800, textAlign: "center" }} type="number" min="1" placeholder="0" value={qty} onChange={e => setQty(e.target.value)} onKeyDown={e => e.key === "Enter" && addItem()} />
@@ -428,8 +438,10 @@ function ManagerDashboard({ manager, onLogout }) {
       `${pull.job_number},${pull.employee_name},${i.bin},"${i.desc}",${i.qty},${new Date(pull.submitted_at).toLocaleString()},"${pull.exported_by}","${new Date(pull.exported_at).toLocaleString()}"`
     ).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url;
-    a.download = `pull-${pull.job_number}-REEXPORT-${Date.now()}.csv`; a.click(); URL.revokeObjectURL(url);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url;
+    a.download = `pull-${pull.job_number}-REEXPORT-${Date.now()}.csv`;
+    a.click(); URL.revokeObjectURL(url);
   };
 
   const active = pulls.filter(p => p.status !== "exported");
