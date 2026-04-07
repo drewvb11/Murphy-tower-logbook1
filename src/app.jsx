@@ -104,6 +104,7 @@ function FieldApp() {
   const [done, setDone] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [partNotFound, setPartNotFound] = useState(false);
   const binRef = useRef(); const qtyRef = useRef();
 
   const canStart = jobNum.trim() && empName.trim();
@@ -112,8 +113,17 @@ function FieldApp() {
   const addItem = () => {
     if (!binInput.trim() || !qty || Number(qty) <= 0) return;
     setItems(prev => [...prev, { id: Date.now(), bin: binInput.trim().toUpperCase(), qty: Number(qty), desc: desc.trim() || "—" }]);
-    setBinInput(""); setQty(""); setDesc("");
+    setBinInput(""); setQty(""); setDesc(""); setPartNotFound(false);
     setTimeout(() => binRef.current?.focus(), 50);
+  };
+
+  const lookupPart = async (val) => {
+    if (!val || val.length < 2) { setDesc(""); setPartNotFound(false); return; }
+    try {
+      const rows = await db(`parts?bin_id=ilike.${encodeURIComponent(val.trim())}&select=description&limit=1`);
+      if (rows && rows.length > 0) { setDesc(rows[0].description); setPartNotFound(false); }
+      else { setDesc(""); setPartNotFound(true); }
+    } catch { setDesc(""); }
   };
 
   const submitPull = async () => {
@@ -183,9 +193,11 @@ function FieldApp() {
         {error && <div style={{ background: C.dangerDim, border: `1px solid ${C.danger}`, borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 13, color: C.danger }}>{error}</div>}
         <div style={s.card}>
           <label style={s.label}>Part #</label>
-          <input ref={binRef} style={{ ...s.inp, fontFamily: C.mono, fontSize: 18, fontWeight: 800, letterSpacing: "0.08em", marginBottom: 14, color: C.limeText }} placeholder="Type part number" value={binInput} onChange={e => setBinInput(e.target.value.toUpperCase())} onKeyDown={e => e.key === "Enter" && addItem()} />
-          <label style={s.label}>Description <span style={{ color: C.border, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>optional</span></label>
-          <input style={{ ...s.inp, marginBottom: 14 }} placeholder='e.g. ½" EMT conduit' value={desc} onChange={e => setDesc(e.target.value)} onKeyDown={e => e.key === "Enter" && addItem()} />
+          <input ref={binRef} style={{ ...s.inp, fontFamily: C.mono, fontSize: 18, fontWeight: 800, letterSpacing: "0.08em", marginBottom: 6, color: C.limeText }} placeholder="Type part number" value={binInput} onChange={e => { setBinInput(e.target.value.toUpperCase()); lookupPart(e.target.value); }} onKeyDown={e => e.key === "Enter" && addItem()} />
+          {partNotFound && <div style={{ fontSize: 12, color: C.amber, marginBottom: 10 }}>⚠ Part not found — enter description manually</div>}
+          {!partNotFound && <div style={{ marginBottom: 14 }} />}
+          <label style={s.label}>Description <span style={{ color: C.border, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>auto-fills from parts catalog</span></label>
+          <input style={{ ...s.inp, marginBottom: 14, color: desc ? C.text : C.muted }} placeholder='Auto-filling...' value={desc} onChange={e => setDesc(e.target.value)} onKeyDown={e => e.key === "Enter" && addItem()} />
           <label style={s.label}>Quantity</label>
           <div style={{ display: "flex", gap: 10 }}>
             <input ref={qtyRef} style={{ ...s.inp, fontSize: 26, fontWeight: 800, textAlign: "center" }} type="number" min="1" placeholder="0" value={qty} onChange={e => setQty(e.target.value)} onKeyDown={e => e.key === "Enter" && addItem()} />
