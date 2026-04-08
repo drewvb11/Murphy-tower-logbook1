@@ -10,6 +10,7 @@ const db = async (path, method = "GET", body) => {
     "Content-Type": "application/json",
   };
   if (method === "POST") headers["Prefer"] = "return=representation";
+  if (method === "DELETE") headers["Prefer"] = "return=minimal";
   const res = await fetch(`${SUPA_URL}/rest/v1/${path}`, {
     method, headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -472,10 +473,22 @@ function ManagerDashboard({ manager, onLogout }) {
             <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 14 }}>Line Items</div>
             <PullTable items={current.items} />
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {!isArchived && <button style={s.btnLimeSm} onClick={() => exportPull(current)}>Export to IES & Archive →</button>}
             {isArchived && <button style={s.btnBlue} onClick={() => reExport(current)}>Re-download CSV</button>}
             <button style={s.btnGhost} onClick={() => { loadPulls(); setSelected(null); }}>↻ Refresh</button>
+            {!isArchived && (
+              <button
+                style={{ padding: "10px 20px", borderRadius: 10, background: C.dangerDim, color: C.danger, fontSize: 13, fontWeight: 800, cursor: "pointer", border: `1px solid ${C.danger}` }}
+                onClick={async () => {
+                  if (!window.confirm("Delete this pull? This cannot be undone.")) return;
+                  await db(`pulls?id=eq.${current.id}`, "DELETE");
+                  await loadPulls();
+                  setSelected(null);
+                }}>
+                Delete Pull
+              </button>
+            )}
           </div>
         </div>
       </div>
