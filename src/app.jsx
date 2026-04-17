@@ -434,9 +434,9 @@ function ManagerDashboard({ manager, onLogout }) {
   };
 
   const reExport = (pull) => {
-    const h = "Job #,Employee,Part #,Description,Quantity,Submitted,Exported By,Exported At\n";
+   const h = "Part #,Quantity\n";
     const csv = h + pull.items.map(i =>
-      `${pull.job_number},${pull.employee_name},${i.bin},"${i.desc}",${i.qty},${new Date(pull.submitted_at).toLocaleString()},"${pull.exported_by}","${new Date(pull.exported_at).toLocaleString()}"`
+      `${i.bin},${i.qty}`
     ).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
